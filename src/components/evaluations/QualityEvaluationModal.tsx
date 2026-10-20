@@ -27,6 +27,7 @@ import { EMPTY_CLASSIFICATION, classificationError, classificationPayload } from
 import { filesApi } from "../../api/sharedRepository";
 import { isTechcenterMovistarCampaign } from '../../data/techcenterMovistarScope';
 import { isPortabilidadBitelCampaign } from '../../data/portabilidadBitelPue';
+import { isWinCampaign, WIN_INCIDENTS } from '../../data/winPue';
 
 const TechcenterMovistarQualityModal=React.lazy(()=>import('./TechcenterMovistarQualityModal').then(module=>({default:module.TechcenterMovistarQualityModal})));
 
@@ -69,6 +70,7 @@ export const QualityEvaluationModal: React.FC<{
   const [commentOpen, setCommentOpen] = useState<string | null>(null);
   const [guideOpen, setGuideOpen] = useState<string | null>(null);
   const [critical, setCritical] = useState<string[]>([]);
+  const [incidents, setIncidents] = useState<string[]>([]);
   const [draftSaved, setDraftSaved] = useState(false);
   const [generalComments, setGeneralComments] = useState("");
   const [callDescription,setCallDescription] = useState('');
@@ -88,9 +90,10 @@ export const QualityEvaluationModal: React.FC<{
   const campaign = campaigns.find((c) => c.id === advisor?.campaignId);
   const isMigracionesBitelCampaign = /(?:migraciones.*bitel|bitel.*migraciones)/i.test(campaign?.name || "");
   const isPortabilidadBitel = isPortabilidadBitelCampaign(campaign?.name);
+  const isWin = isWinCampaign(campaign?.name);
   const criterionWeights = campaign?.qualityCriterionWeights || QUALITY_WEIGHTS;
   const criterionWeight = (value: string) => criterionWeights[value as keyof typeof criterionWeights] || 0;
-  const criticalErrors = (campaign?.qualityCriticalErrors?.length
+  const criticalErrors = (isWin ? [] : campaign?.qualityCriticalErrors?.length
     ? campaign.qualityCriticalErrors
     : QUALITY_CRITICAL_ERRORS.map((error) => ({ ...error, active: true }))).filter((error) => error.active);
   const guidelines = (
@@ -115,7 +118,8 @@ export const QualityEvaluationModal: React.FC<{
       return {
         criterion,
         score: denom ? Math.round((valid / denom) * 100) : null,
-        active: !!rows.length,
+        ratio: denom ? valid / denom : 0,
+        active: denom > 0,
         weight: criterionWeight(criterion),
       };
     });
@@ -123,7 +127,7 @@ export const QualityEvaluationModal: React.FC<{
       .filter((g) => g.active)
       .reduce((n, g) => n + g.weight, 0);
     const base = groups.reduce(
-      (n, g) => n + ((g.score || 0) / 100) * g.weight,
+      (n, g) => n + (isWin ? g.ratio : (g.score || 0) / 100) * g.weight,
       0,
     );
     const invalid =
@@ -140,7 +144,7 @@ export const QualityEvaluationModal: React.FC<{
       denominator: Math.round(denom * 100),
       answered: denom > 0,
     };
-  }, [answers, critical, guidelines, criterionWeights, isMigracionesBitelCampaign, isPortabilidadBitel]);
+  }, [answers, critical, guidelines, criterionWeights, isMigracionesBitelCampaign, isPortabilidadBitel, isWin]);
   const displayedScore = isPortabilidadBitel && summary.invalid ? 0 : summary.score;
   const update = (id: string, value: Result) => {
     setAnswers((p) => ({ ...p, [id]: value }));
@@ -156,6 +160,13 @@ export const QualityEvaluationModal: React.FC<{
       if (saleResult === 'NO_VENTA' && answers.pb_3_3 !== 'NO_APLICA') { setAudioError('En una no venta, el atributo 3.3 debe marcarse No aplica.'); return; }
       if (saleResult === 'VENTA_CONCRETADA' && answers.pb_3_3 === 'NO_APLICA') { setAudioError('En una venta, evalúa el atributo 3.3.'); return; }
       if (!summary.answered) { setAudioError('Debe haber al menos un atributo evaluable.'); return; }
+    }
+    if (isWin) {
+      if (!saleResult) { setAudioError('Selecciona si la llamada terminó en venta o no venta.'); return; }
+      if (guidelines.some(item => !answers[item.id])) { setAudioError('Responde todos los atributos de la pauta WIN.'); return; }
+      if (saleResult === 'NO_VENTA' && ['win_4_2','win_4_4','win_contract'].some(id => answers[id] !== 'NO_APLICA')) { setAudioError('En no venta, marca No aplica en los tres atributos exclusivos de venta.'); return; }
+      if (saleResult === 'VENTA_CONCRETADA' && answers.win_4_2 === 'NO_APLICA') { setAudioError('En venta, evalúa la prevalidación del titular.'); return; }
+      if (!summary.answered) { setAudioError('Debe existir al menos un atributo puntuable.'); return; }
     }
     savingRef.current = true;
     setIsSaving(true);
@@ -226,8 +237,9 @@ export const QualityEvaluationModal: React.FC<{
       origin: "MANUAL",
       qualityCriticalErrorIds: critical,
       qualityCriticalErrorSnapshot: criticalErrors.filter((error) => critical.includes(error.id)),
-      sale: isPortabilidadBitel && saleResult === 'VENTA_CONCRETADA',
-      saleResult: isPortabilidadBitel ? saleResult as 'VENTA_CONCRETADA' | 'NO_VENTA' : "NO_VENTA",
+      qualityIncidentIds: isWin ? incidents : undefined,
+      sale: (isPortabilidadBitel || isWin) && saleResult === 'VENTA_CONCRETADA',
+      saleResult: isPortabilidadBitel || isWin ? saleResult as 'VENTA_CONCRETADA' | 'NO_VENTA' : "NO_VENTA",
       comments: generalComments,
       callDescription:callDescription.trim(),
       primaryGap: "",
@@ -356,7 +368,7 @@ export const QualityEvaluationModal: React.FC<{
                   <option value="CERTIFICACION">Certificación</option>
                 </select>
               </label>
-              {isPortabilidadBitel && <label className="font-semibold text-[#43565A]">Resultado de la llamada *<select value={saleResult} onChange={event=>{const value=event.target.value as typeof saleResult;setSaleResult(value);setAnswers(previous=>({...previous,pb_3_3:value==='NO_VENTA'?'NO_APLICA':undefined}));setDraftSaved(false);}} className="mt-1 w-full rounded-lg border border-[#D7E2E2] bg-white px-3 py-2 text-sm"><option value="">Seleccionar</option><option value="VENTA_CONCRETADA">Venta</option><option value="NO_VENTA">No venta</option></select></label>}
+              {(isPortabilidadBitel || isWin) && <label className="font-semibold text-[#43565A]">Resultado de la llamada *<select value={saleResult} onChange={event=>{const value=event.target.value as typeof saleResult;setSaleResult(value);setAnswers(previous=>({...previous,...(isPortabilidadBitel?{pb_3_3:value==='NO_VENTA'?'NO_APLICA':undefined}:{win_4_2:value==='NO_VENTA'?'NO_APLICA':undefined,win_4_4:value==='NO_VENTA'?'NO_APLICA':undefined,win_contract:value==='NO_VENTA'?'NO_APLICA':undefined})}));setDraftSaved(false);}} className="mt-1 w-full rounded-lg border border-[#D7E2E2] bg-white px-3 py-2 text-sm"><option value="">Seleccionar</option><option value="VENTA_CONCRETADA">Venta</option><option value="NO_VENTA">No venta</option></select></label>}
               <div className="rounded-lg border border-dashed border-[#9DBFC0] bg-[#F3FAFA] px-3 py-2 text-xs text-[#43565A]"><b className="text-[#006B6B]">Origen: Manual</b><br/>Speech Analytics: integración pendiente de API.</div>
               <label className="font-semibold text-[#43565A]">
                 Hora de llamada
@@ -520,6 +532,7 @@ export const QualityEvaluationModal: React.FC<{
                       <b className="pt-1">{a.code}</b>
                       <div>
                         <b className="text-xs">{a.name}</b>
+                        {isWin && a.weight === 0 && <span className="ml-2 text-[10px] text-[#66767A]">Atributo adicional sin peso</span>}
                         {a.category && <span className="ml-2 text-[10px] text-[#66767A]">{a.category}</span>}
                         {"critical" in a && a.critical && (
                           <span className="ml-2 text-[10px] font-bold text-[#FF4D4F]">
@@ -545,7 +558,7 @@ export const QualityEvaluationModal: React.FC<{
                       <b className="pt-1 text-xs">{a.weight * 100}%</b>
                       <select
                         value={answer || ""}
-                        disabled={isPortabilidadBitel && a.id === 'pb_3_3' && saleResult === 'NO_VENTA'}
+                        disabled={(isPortabilidadBitel && a.id === 'pb_3_3' || isWin && ['win_4_2','win_4_4','win_contract'].includes(a.id)) && saleResult === 'NO_VENTA'}
                         onChange={(e) =>
                           update(
                             a.id,
@@ -579,12 +592,12 @@ export const QualityEvaluationModal: React.FC<{
                       </button>
                     </div>
                     {guideOpen === a.id && (
-                      <div className="mx-4 mb-3 rounded-lg border border-[#BFE5E1] bg-[#F3FAF9] p-3 text-xs text-[#43565A]">
+                      <div className={`mx-4 mb-3 rounded-lg border border-[#BFE5E1] bg-[#F3FAF9] p-3 text-xs text-[#43565A] ${isWin ? 'whitespace-pre-wrap' : ''}`}>
                         <p>
                           <b>Esperado:</b> {a.expected}
                         </p>
                         <p className="mt-1">
-                          <b>No cumple:</b> {a.failures}
+                          <b>{isWin ? 'Sub-detalle de la pauta:' : 'No cumple:'}</b> {a.failures}
                         </p>
                         <p className="mt-1">
                           <b>No aplica:</b> {a.exclusion}
@@ -637,7 +650,7 @@ export const QualityEvaluationModal: React.FC<{
               className="mt-2 w-full rounded-lg border border-[#A9D2D0] bg-white p-3 text-sm text-[#102A2E] outline-none focus:border-[#008B88]"
             />
           </section>
-          <section className="rounded-xl border border-[#FFCACA] bg-[#FFF7F7] p-4">
+          {isWin ? <section className="rounded-xl border border-[#E2E9E9] bg-[#FBFCFC] p-4"><h4 className="text-sm font-bold">Malas prácticas observadas</h4><p className="mt-1 text-xs text-[#66767A]">Se registran por separado. La pauta no define un descuento numérico para ellas.</p><div className="mt-3 space-y-2">{WIN_INCIDENTS.map(incident=><label key={incident.id} className="flex items-start gap-2 text-xs text-[#43565A]"><input type="checkbox" checked={incidents.includes(incident.id)} onChange={event=>setIncidents(previous=>event.target.checked?[...previous,incident.id]:previous.filter(id=>id!==incident.id))}/><span><b>{incident.name}</b> — {incident.description}</span></label>)}</div></section> : <section className="rounded-xl border border-[#FFCACA] bg-[#FFF7F7] p-4">
             <div className="flex items-center gap-2 text-sm font-bold text-[#FF4D4F]">
               <AlertTriangle className="h-4 w-4" />
               {isPortabilidadBitel ? 'Errores críticos — cualquiera deja la PUE en 0%' : 'Errores críticos 4.1 — cualquiera deja la PUE en 0%'}
@@ -665,6 +678,7 @@ export const QualityEvaluationModal: React.FC<{
               ))}
             </div>
           </section>
+          }
           <section className="rounded-xl border border-[#E2E9E9] bg-[#FBFCFC] p-4">
             <label htmlFor="quality-call-description" className="text-sm font-bold">Descripción de la llamada</label>
             <textarea id="quality-call-description" rows={3} value={callDescription} onChange={event=>{setCallDescription(event.target.value);setDraftSaved(false);}} placeholder="Resume qué ocurrió durante la llamada..." className="cm-input mt-2 w-full p-3 text-sm"/>

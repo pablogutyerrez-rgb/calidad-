@@ -222,6 +222,7 @@ export interface EvaluationItem {
   timestamp?: string; // e.g. "01:24"
   timestampSeconds?: number; // e.g. 84
   qualityGuideline?: QualityGuideline; // Snapshot histórico de la pauta aplicada
+  attributeWeight?: number;
   category?: string;
   attribute?: string;
   errorType?: string;
@@ -249,6 +250,8 @@ export interface Evaluation {
   evaluationType?: PlatformEvaluationType;
   qualityCriticalErrorIds?: string[];
   qualityCriticalErrorSnapshot?: QualityCriticalError[];
+  /** Incidencias de la pauta WIN: se registran sin alterar la nota, pues la fuente no define penalización. */
+  qualityIncidentIds?: string[];
   qualityStatus?: 'DRAFT' | 'FINALIZED';
   validationStatus?: 'AUTOMATIC_PENDING' | 'VALIDATED' | 'PENDIENTE_AUTOMATICO' | 'VALIDADO' | 'AJUSTADO_VALIDADO';
   origin?: 'MANUAL' | 'SPEECH_ANALYTICS';

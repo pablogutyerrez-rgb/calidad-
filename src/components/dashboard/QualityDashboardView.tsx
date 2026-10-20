@@ -3,6 +3,7 @@ import { CheckCircle2, ClipboardCheck, Link2, ListChecks, ShieldCheck, Tag, User
 import { useApp } from '../../context/AppContext';
 import { QUALITY_ATTRIBUTES } from '../../data/qualityPueData';
 import { isPortabilidadBitelCampaign } from '../../data/portabilidadBitelPue';
+import { isWinCampaign } from '../../data/winPue';
 import { FiltersBar } from '../common/FiltersBar';
 import { EvaluationOriginFilter, type EvaluationOriginFilterValue } from './EvaluationOriginFilter';
 import { isQualityEvaluable } from '../../utils/speechTypification';
@@ -44,8 +45,8 @@ export const QualityDashboardView: React.FC = () => {
   const standardCriteria = ['C1', 'C2', 'C3', 'C4'].map((criterion, index) => {
     const items = activeGuidelines.filter(attribute => attribute.criterion === criterion);
     const results = quality.flatMap(evaluation => evaluation.items.filter(item => items.some(attribute => attribute.id === item.criterionId) && item.compliance !== 'NO_APLICA'));
-    const score = results.length ? Math.round((results.filter(item => item.compliance === 'CUMPLE').length / results.length) * 100) : null;
-    return { criterion, label: (isPortabilidadBitelCampaign(selectedCampaign?.name) ? ['Conexión y diagnóstico', 'Propuesta de valor', 'Calificación y cierre', 'Experiencia del cliente'] : ['Conexión y diagnóstico', 'Oferta y condiciones', 'Cierre y formalización', 'Cumplimiento transversal'])[index], score };
+    const score = isWinCampaign(selectedCampaign?.name) ? (()=>{const byId=new Map(items.map(item=>[item.id,item.weight]));const values=quality.flatMap(evaluation=>{const answered=evaluation.items.filter(item=>byId.has(item.criterionId)&&['CUMPLE','NO_CUMPLE'].includes(item.compliance||''));const possible=answered.reduce((sum,item)=>sum+(byId.get(item.criterionId)||0),0);const earned=answered.filter(item=>item.compliance==='CUMPLE').reduce((sum,item)=>sum+(byId.get(item.criterionId)||0),0);return possible?[earned/possible*100]:[];});return values.length?Math.round(values.reduce((sum,value)=>sum+value,0)/values.length):null;})() : results.length ? Math.round((results.filter(item => item.compliance === 'CUMPLE').length / results.length) * 100) : null;
+    return { criterion, label: (isWinCampaign(selectedCampaign?.name) ? ['Impacta','Descubre','Soluciona','Consolida'] : isPortabilidadBitelCampaign(selectedCampaign?.name) ? ['Conexión y diagnóstico', 'Propuesta de valor', 'Calificación y cierre', 'Experiencia del cliente'] : ['Conexión y diagnóstico', 'Oferta y condiciones', 'Cierre y formalización', 'Cumplimiento transversal'])[index], score };
   });
   const techcenterEvaluations=quality.filter(evaluation=>evaluation.qualityForm?.id===TECHCENTER_MOVISTAR_FORM_ID);
   const customCriteria=new Map<string,{criterion:string;label:string;passed:number;total:number}>();

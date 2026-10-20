@@ -20,6 +20,7 @@ import * as XLSX from 'xlsx';
 import { calculateEvaluationSummary, getItemCompliance } from './src/utils/calculations';
 import { QUALITY_ATTRIBUTES } from './src/data/qualityPueData';
 import { withPortabilidadBitelPue, isPortabilidadBitelCampaign } from './src/data/portabilidadBitelPue';
+import { withWinPue, isWinCampaign, WIN_INCIDENTS } from './src/data/winPue';
 import { TECHCENTER_MOVISTAR_FORM_ID, TECHCENTER_MOVISTAR_FLOWS, isTechcenterMovistarCampaign, isTechcenterCriterion, isReverseTechcenterCriterion, techcenterFieldsForFlow, type TechcenterMovistarFlow } from './src/data/techcenterMovistarForm';
 import { evaluationGeoCall, resolveGeoAnalysis } from './src/utils/movistarGeo';
 import { classificationError, classificationFromEvaluation, classificationPayload, evaluationTypificationLabel, requiresLocation } from './src/utils/evaluationTypification';
@@ -142,8 +143,8 @@ const correctMigracionesQualityEvaluation = (evaluation: any, campaigns: Campaig
   const dimensions: Record<string,string> = { C1:'CONECTAR', C2:'CLARIFICAR', C3:'CONVERTIR', C4:'CONECTAR_C4' };
   const groups = Object.entries(dimensions).map(([criterion,dimension]) => {
     const rows = (evaluation.items || []).filter((item:any) => item.dimension === dimension && ['CUMPLE','NO_CUMPLE'].includes(item.compliance));
-    const denominator = rows.reduce((sum:number,item:any) => sum + Number(item.attributeWeight || item.qualityGuideline?.weight || 1), 0);
-    const achieved = rows.filter((item:any) => item.compliance === 'CUMPLE').reduce((sum:number,item:any) => sum + Number(item.attributeWeight || item.qualityGuideline?.weight || 1), 0);
+    const denominator = rows.reduce((sum:number,item:any) => sum + Number(item.attributeWeight ?? item.qualityGuideline?.weight ?? 1), 0);
+    const achieved = rows.filter((item:any) => item.compliance === 'CUMPLE').reduce((sum:number,item:any) => sum + Number(item.attributeWeight ?? item.qualityGuideline?.weight ?? 1), 0);
     return { criterion, score: denominator ? achieved / denominator * 100 : null, weight: Number((weights as any)[criterion] || 0) };
   });
   const activeWeight = groups.reduce((sum,item) => sum + (item.score === null ? 0 : item.weight), 0);
@@ -173,8 +174,8 @@ const recalculateEditedEvaluation = (evaluation: any, campaigns: Campaign[]) => 
   const dimensionCriterion: Record<string,string> = { CONECTAR:'C1', CLARIFICAR:'C2', CONVERTIR:'C3', CONECTAR_C4:'C4' };
   const groups = ['C1','C2','C3','C4'].map(criterion => {
     const rows = items.filter((item:any) => (item.qualityGuideline?.criterion || dimensionCriterion[item.dimension]) === criterion && ['CUMPLE','NO_CUMPLE'].includes(item.compliance));
-    const denominator = rows.reduce((sum:number,item:any) => sum + Number(item.attributeWeight || item.qualityGuideline?.weight || 1), 0);
-    const achieved = rows.filter((item:any) => item.compliance === 'CUMPLE').reduce((sum:number,item:any) => sum + Number(item.attributeWeight || item.qualityGuideline?.weight || 1), 0);
+    const denominator = rows.reduce((sum:number,item:any) => sum + Number(item.attributeWeight ?? item.qualityGuideline?.weight ?? 1), 0);
+    const achieved = rows.filter((item:any) => item.compliance === 'CUMPLE').reduce((sum:number,item:any) => sum + Number(item.attributeWeight ?? item.qualityGuideline?.weight ?? 1), 0);
     return { criterion, score: denominator ? achieved / denominator * 100 : null, weight: Number((criterionWeights as any)[criterion] || 0) };
   });
   const activeWeight = groups.reduce((sum,item) => sum + (item.score === null ? 0 : item.weight), 0);
@@ -190,9 +191,9 @@ const recalculateEditedEvaluation = (evaluation: any, campaigns: Campaign[]) => 
     scoreConnect: groups.find(item=>item.criterion==='C1')?.score == null ? null : Math.round(groups.find(item=>item.criterion==='C1')!.score!),
     scoreClarify: groups.find(item=>item.criterion==='C2')?.score == null ? null : Math.round(groups.find(item=>item.criterion==='C2')!.score!),
     scoreConvert: groups.find(item=>item.criterion==='C3')?.score == null ? null : Math.round(groups.find(item=>item.criterion==='C3')!.score!),
-    qualityResult: criticalFailure || failedByMinimum ? 'REPROBADA' : 'APROBADA',
+    qualityResult: isWinCampaign(campaign?.name) ? undefined : criticalFailure || failedByMinimum ? 'REPROBADA' : 'APROBADA',
     criticalReason: criticalFailure ? (evaluation.qualityCriticalErrorSnapshot?.[0]?.name || criticalItem?.errorType || 'Error crítico') : failedByMinimum ? 'Puntaje menor al mínimo aprobatorio de 75%' : undefined,
-    primaryGap: gaps[0]?.attribute || gaps[0]?.qualityGuideline?.name || 'Sin brechas identificadas',
+    primaryGap: gaps[0]?.attribute || gaps[0]?.qualityGuideline?.name || (isWinCampaign(campaign?.name) ? '' : 'Sin brechas identificadas'),
     secondaryGap: gaps[1]?.attribute || gaps[1]?.qualityGuideline?.name || '',
     strongestPillar: groups.filter(item=>item.score!==null).sort((a,b)=>(b.score||0)-(a.score||0))[0]?.criterion || '',
     recommendation: gaps.length ? 'Revisar los atributos marcados como No cumple.' : 'Mantener el estándar de calidad alcanzado.'
@@ -353,7 +354,7 @@ db.exec('CREATE UNIQUE INDEX IF NOT EXISTS ux_assignment_one_active ON operation
 
 function repository(): SharedRepository {
   const users = db.prepare('SELECT * FROM users ORDER BY created_at DESC').all().map(publicUser);
-  const campaigns = db.prepare('SELECT * FROM campaigns ORDER BY name').all().map((r: any) => withPortabilidadBitelPue({ id: r.id, name: r.name, client: r.client, status: r.status, products: JSON.parse(r.products_json), description: r.description || undefined, backgroundImage: r.background_image || undefined, qualityGuidelines: JSON.parse(r.quality_guidelines_json || '[]'), qualityCriterionWeights: JSON.parse(r.quality_criterion_weights_json || 'null') || undefined, qualityCriticalErrors: JSON.parse(r.quality_critical_errors_json || '[]') }));
+  const campaigns = db.prepare('SELECT * FROM campaigns ORDER BY name').all().map((r: any) => withWinPue(withPortabilidadBitelPue({ id: r.id, name: r.name, client: r.client, status: r.status, products: JSON.parse(r.products_json), description: r.description || undefined, backgroundImage: r.background_image || undefined, qualityGuidelines: JSON.parse(r.quality_guidelines_json || '[]'), qualityCriterionWeights: JSON.parse(r.quality_criterion_weights_json || 'null') || undefined, qualityCriticalErrors: JSON.parse(r.quality_critical_errors_json || '[]') })));
   const companies=db.prepare('SELECT id,name,status,created_at,updated_at FROM companies ORDER BY name').all().map((r:any)=>({id:r.id,name:r.name,status:r.status,createdAt:r.created_at,updatedAt:r.updated_at||undefined}));
   const operations=db.prepare('SELECT * FROM operations ORDER BY name').all().map((r:any)=>({id:r.id,companyId:r.company_id,campaignId:r.campaign_id,name:r.name,normalizedName:r.normalized_name,status:r.status,legacy:Boolean(r.legacy),createdAt:r.created_at||undefined,updatedAt:r.updated_at||undefined,closedAt:r.closed_at||undefined,version:Number(r.version||1),metadata:JSON.parse(r.metadata_json||'{}')}));
   const operationSupervisors=db.prepare('SELECT * FROM operation_supervisors ORDER BY start_at').all().map((r:any)=>({operationId:r.operation_id,supervisorId:r.supervisor_id,active:Boolean(r.active),startAt:r.start_at,endAt:r.end_at||undefined}));
@@ -954,6 +955,20 @@ async function startServer() {
         if(criticalIds.some((id:string)=>!allowedCritical.has(id)))return res.status(400).json({error:'Error crítico no reconocido en esta PUE.'});
         const dimensions:Record<string,string>={C1:'CONECTAR',C2:'CLARIFICAR',C3:'CONVERTIR',C4:'CONECTAR_C4'};
         evaluation={...evaluation,campaignId:advisor.campaignId,sale:evaluation.saleResult==='VENTA_CONCRETADA',items:definitions.map(definition=>{const answer:any=byId.get(definition.id);return{...answer,criterionId:definition.id,dimension:dimensions[definition.criterion],qualityGuideline:definition,attributeWeight:definition.weight,classification:definition.classification||(definition.critical?'CRITICO_COMPLIANCE':'NO_CRITICO'),attribute:definition.name};}),qualityCriticalErrorIds:criticalIds,qualityCriticalErrorSnapshot:(campaign.qualityCriticalErrors||[]).filter(item=>criticalIds.includes(item.id)),qualityStatus:'FINALIZED'};
+        evaluation=recalculateEditedEvaluation(evaluation,directory.campaigns);
+      }
+      if(evaluation.evaluationType==='QUALITY'&&isWinCampaign(campaign.name)){
+        if(!['VENTA_CONCRETADA','NO_VENTA'].includes(evaluation.saleResult))return res.status(400).json({error:'Selecciona venta o no venta para la pauta WIN.'});
+        const definitions=campaign.qualityGuidelines||[],byId=new Map(answeredItems.map((item:any)=>[String(item.criterionId),item]));
+        if(definitions.length!==16||byId.size!==definitions.length||definitions.some(item=>!byId.has(item.id)))return res.status(400).json({error:'Responde los 16 atributos de la pauta WIN.'});
+        if(definitions.some(item=>{const answer:any=byId.get(item.id);return !['CUMPLE','NO_CUMPLE','NO_APLICA'].includes(answer?.compliance)||(answer.compliance==='NO_APLICA'&&!item.noApplies);}))return res.status(400).json({error:'Responde cada atributo; No aplica solo está permitido según la pauta.'});
+        if(evaluation.saleResult==='NO_VENTA'&&['win_4_2','win_4_4','win_contract'].some(id=>(byId.get(id) as any)?.compliance!=='NO_APLICA'))return res.status(400).json({error:'En no venta, prevalidación, registro de portabilidad y lectura del contrato deben marcarse No aplica.'});
+        if(evaluation.saleResult==='VENTA_CONCRETADA'&&(byId.get('win_4_2') as any)?.compliance==='NO_APLICA')return res.status(400).json({error:'En venta, evalúa la prevalidación del titular.'});
+        if(!answeredItems.some((item:any)=>item.compliance!=='NO_APLICA'&&Number(definitions.find(definition=>definition.id===item.criterionId)?.weight)>0))return res.status(400).json({error:'Debe existir al menos un atributo puntuable.'});
+        const incidentIds=Array.isArray(evaluation.qualityIncidentIds)?[...new Set(evaluation.qualityIncidentIds.map(String))]:[];
+        if(incidentIds.some((id:string)=>!WIN_INCIDENTS.some(item=>item.id===id))||evaluation.qualityCriticalErrorIds?.length)return res.status(400).json({error:'Incidencia WIN no reconocida.'});
+        const dimensions:Record<string,string>={C1:'CONECTAR',C2:'CLARIFICAR',C3:'CONVERTIR',C4:'CONECTAR_C4'};
+        evaluation={...evaluation,campaignId:advisor.campaignId,sale:evaluation.saleResult==='VENTA_CONCRETADA',items:definitions.map(definition=>{const answer:any=byId.get(definition.id);return{...answer,criterionId:definition.id,dimension:dimensions[definition.criterion],qualityGuideline:definition,attributeWeight:definition.weight,classification:'NO_CRITICO',attribute:definition.name};}),qualityIncidentIds:incidentIds,qualityCriticalErrorIds:[],qualityCriticalErrorSnapshot:[],qualityStatus:'FINALIZED'};
         evaluation=recalculateEditedEvaluation(evaluation,directory.campaigns);
       }
       evaluation = { ...evaluation, campaignId:advisor.campaignId, teamId:advisor.teamId, supervisorId:advisor.supervisorId, operationId:operation.id, companyId:operation.companyId, supervisorAtEvaluation:advisor.supervisorId, validationStatus: 'VALIDATED' };

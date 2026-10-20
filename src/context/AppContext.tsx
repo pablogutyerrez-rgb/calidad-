@@ -33,6 +33,7 @@ import { actionPlansApi, adminCampaignsApi, adminUsersApi, authApi, evaluationsA
 import type { SharedRepository } from '../api/sharedRepository';
 import { QUALITY_WEIGHTS } from '../data/qualityPueData';
 import { isPortabilidadBitelCampaign } from '../data/portabilidadBitelPue';
+import { isWinCampaign } from '../data/winPue';
 
 export const formatAdvisorUsername = (name: string): string => {
   const parts = name
@@ -606,11 +607,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const qualityWeights = campaigns.find(campaign => campaign.id === evalData.campaignId)?.qualityCriterionWeights || QUALITY_WEIGHTS;
     const qualityKeys: Array<'C1' | 'C2' | 'C3' | 'C4'> = ['C1', 'C2', 'C3', 'C4'];
     const activeQualityWeight = qualityScores ? qualityKeys.reduce((sum, key) => sum + (qualityScores[key] === null ? 0 : qualityWeights[key]), 0) : 0;
-    const rawQualityTotal = qualityScores && activeQualityWeight ? Math.round(qualityKeys.reduce((sum, key) => sum + (qualityScores[key] === null ? 0 : Number(qualityScores[key]) * qualityWeights[key]), 0) / activeQualityWeight) : null;
     const qualityCampaign = campaigns.find(campaign => campaign.id === evalData.campaignId);
+    const rawQualityTotal = qualityScores && activeQualityWeight ? isWinCampaign(qualityCampaign?.name)
+      ? Math.round(qualityKeys.reduce((sum,key)=>{const dimension={C1:'CONECTAR',C2:'CLARIFICAR',C3:'CONVERTIR',C4:'CONECTAR_C4'}[key];const rows=evalData.items.filter(item=>item.dimension===dimension&&['CUMPLE','NO_CUMPLE'].includes(item.compliance||''));const possible=rows.reduce((total,item)=>total+Number(item.attributeWeight??item.qualityGuideline?.weight??1),0);const earned=rows.filter(item=>item.compliance==='CUMPLE').reduce((total,item)=>total+Number(item.attributeWeight??item.qualityGuideline?.weight??1),0);return sum+(possible?earned/possible*qualityWeights[key]:0);},0)/activeQualityWeight*100)
+      : Math.round(qualityKeys.reduce((sum, key) => sum + (qualityScores[key] === null ? 0 : Number(qualityScores[key]) * qualityWeights[key]), 0) / activeQualityWeight) : null;
     const failedByMinimum = Boolean(quality && (/(?:migraciones.*bitel|bitel.*migraciones)/i.test(qualityCampaign?.name || '') || isPortabilidadBitelCampaign(qualityCampaign?.name)) && (rawQualityTotal ?? 0) < 75);
     const firstGap=evalData.items.find(item=>item.compliance==='NO_CUMPLE');
-    const summary = quality ? { scoreConnect: techcenterForm?null:qualityScores!.C1, scoreClarify: qualityScores!.C2, scoreConvert: qualityScores!.C3, scoreTotal: criticalFailure ? 0 : rawQualityTotal, primaryGap: techcenterForm ? firstGap?.attribute||firstGap?.qualityGuideline?.name||'' : criticalFailure ? 'Error crítico PUE' : 'PUE', secondaryGap: '', strongestPillar: '', recommendation: criticalFailure ? 'Corregir error crítico antes de nueva evaluación.' : 'Revisar atributos no cumplidos.' } : calculateEvaluationSummary(evalData.items, config);
+    const summary = quality ? { scoreConnect: techcenterForm?null:qualityScores!.C1, scoreClarify: qualityScores!.C2, scoreConvert: qualityScores!.C3, scoreTotal: criticalFailure ? 0 : rawQualityTotal, primaryGap: isWinCampaign(qualityCampaign?.name) ? firstGap?.attribute||firstGap?.qualityGuideline?.name||'' : techcenterForm ? firstGap?.attribute||firstGap?.qualityGuideline?.name||'' : criticalFailure ? 'Error crítico PUE' : 'PUE', secondaryGap: '', strongestPillar: '', recommendation: criticalFailure ? 'Corregir error crítico antes de nueva evaluación.' : 'Revisar atributos no cumplidos.' } : calculateEvaluationSummary(evalData.items, config);
     const newEval: Evaluation = {
       ...evalData,
       evaluationType: evalData.evaluationType || 'D3C',
@@ -621,7 +624,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       scoreConvert: summary.scoreConvert,
       scoreTotal: summary.scoreTotal,
       technicalScore: quality ? rawQualityTotal : undefined,
-      qualityResult: quality && !techcenterForm ? (criticalFailure || failedByMinimum ? 'REPROBADA' : 'APROBADA') : undefined,
+      qualityResult: quality && !techcenterForm && !isWinCampaign(qualityCampaign?.name) ? (criticalFailure || failedByMinimum ? 'REPROBADA' : 'APROBADA') : undefined,
       criticalReason: quality && criticalFailure ? (evalData.qualityCriticalErrorSnapshot?.[0]?.name || criticalItem?.classification?.replaceAll('_', ' ') || 'Error crítico') : failedByMinimum ? 'Puntaje menor al mínimo aprobatorio de 75%' : undefined,
       primaryGap: summary.primaryGap,
       secondaryGap: summary.secondaryGap,

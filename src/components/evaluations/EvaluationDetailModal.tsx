@@ -13,6 +13,7 @@ import { getItemCompliance } from '../../utils/calculations';
 import { filesApi } from '../../api/sharedRepository';
 import { SPEECH_TYPIFICATIONS } from '../../utils/speechTypification';
 import { TECHCENTER_MOVISTAR_FORM_ID, TECHCENTER_MOVISTAR_FIELDS } from '../../data/techcenterMovistarForm';
+import { WIN_INCIDENTS } from '../../data/winPue';
 import { 
   X, 
   FileAudio, 
@@ -224,7 +225,7 @@ export const EvaluationDetailModal: React.FC<EvaluationDetailModalProps> = ({
                     </span>
                     <span className="block text-[10px] uppercase font-semibold text-[var(--cm-text-secondary)]">{isQuality ? 'Calidad técnica' : 'Puntaje Calidad'}</span>
                   </div>
-                  {isQuality && (evaluation.qualityForm?.id===TECHCENTER_MOVISTAR_FORM_ID ? <div className="rounded-xl border border-[var(--cm-border)] px-3 py-2 text-center"><b className="block text-sm">{evaluation.qualityForm.earned} de {evaluation.qualityForm.possible}</b><span className="text-[10px]">Sin umbral aprobatorio definido</span></div> : <div className={`rounded-xl border px-3 py-2 text-center ${evaluation.qualityResult === 'REPROBADA' ? 'border-[var(--cm-danger)] text-[var(--cm-danger)]' : 'border-[var(--cm-success)] text-[var(--cm-success)]'}`}><b className="block text-sm">{evaluation.qualityResult || (evaluation.scoreTotal === 0 && evaluation.qualityCriticalErrorIds?.length ? 'REPROBADA' : 'APROBADA')}</b><span className="text-[10px]">{evaluation.criticalReason || 'Resultado final'}</span></div>)}
+                  {isQuality && (evaluation.qualityForm?.id===TECHCENTER_MOVISTAR_FORM_ID ? <div className="rounded-xl border border-[var(--cm-border)] px-3 py-2 text-center"><b className="block text-sm">{evaluation.qualityForm.earned} de {evaluation.qualityForm.possible}</b><span className="text-[10px]">Sin umbral aprobatorio definido</span></div> : evaluation.items.some(item=>item.criterionId.startsWith('win_')) ? <div className="rounded-xl border border-[var(--cm-border)] px-3 py-2 text-center"><b className="block text-sm">Pauta WIN</b><span className="text-[10px]">Sin umbral aprobatorio definido</span>{evaluation.qualityIncidentIds?.length ? <span className="block text-[10px]">{evaluation.qualityIncidentIds.length} malas prácticas registradas</span> : null}</div> : <div className={`rounded-xl border px-3 py-2 text-center ${evaluation.qualityResult === 'REPROBADA' ? 'border-[var(--cm-danger)] text-[var(--cm-danger)]' : 'border-[var(--cm-success)] text-[var(--cm-success)]'}`}><b className="block text-sm">{evaluation.qualityResult || (evaluation.scoreTotal === 0 && evaluation.qualityCriticalErrorIds?.length ? 'REPROBADA' : 'APROBADA')}</b><span className="text-[10px]">{evaluation.criticalReason || 'Resultado final'}</span></div>)}
                   <div className="flex-1">
                     {isQuality && evaluation.qualityForm?.id===TECHCENTER_MOVISTAR_FORM_ID ? <div className="text-xs"><b>{evaluation.qualityForm.flow}</b><span className="block text-[var(--cm-text-secondary)]">Cada criterio aplicable vale lo mismo; No aplica se excluye.</span></div> : isQuality ? (
                       <div className="grid grid-cols-4 gap-2">
@@ -249,6 +250,7 @@ export const EvaluationDetailModal: React.FC<EvaluationDetailModalProps> = ({
                   <span>Brecha Crítica: <strong>{evaluation.primaryGap}</strong></span>
                 </div>
               )}
+              {evaluation.qualityIncidentIds?.length ? <div className="mt-3 rounded-lg border border-amber-500/40 p-3 text-xs"><b>Malas prácticas observadas (sin descuento definido)</b><ul className="mt-1 list-disc pl-4">{evaluation.qualityIncidentIds.map(id=><li key={id}>{WIN_INCIDENTS.find(incident=>incident.id===id)?.name||id}</li>)}</ul></div> : null}
             </div>
 
           </div>
