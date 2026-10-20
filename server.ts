@@ -19,6 +19,7 @@ import { DatabaseSync } from "node:sqlite";
 import * as XLSX from 'xlsx';
 import { calculateEvaluationSummary, getItemCompliance } from './src/utils/calculations';
 import { QUALITY_ATTRIBUTES } from './src/data/qualityPueData';
+import { withPortabilidadBitelPue, isPortabilidadBitelCampaign } from './src/data/portabilidadBitelPue';
 import { TECHCENTER_MOVISTAR_FORM_ID, TECHCENTER_MOVISTAR_FLOWS, isTechcenterMovistarCampaign, isTechcenterCriterion, isReverseTechcenterCriterion, techcenterFieldsForFlow, type TechcenterMovistarFlow } from './src/data/techcenterMovistarForm';
 import { evaluationGeoCall, resolveGeoAnalysis } from './src/utils/movistarGeo';
 import { classificationError, classificationFromEvaluation, classificationPayload, evaluationTypificationLabel, requiresLocation } from './src/utils/evaluationTypification';
@@ -180,7 +181,7 @@ const recalculateEditedEvaluation = (evaluation: any, campaigns: Campaign[]) => 
   const technicalScore = activeWeight ? Math.round(groups.reduce((sum,item) => sum + (item.score === null ? 0 : item.score * item.weight), 0) / activeWeight) : null;
   const criticalItem = items.find((item:any) => item.compliance === 'NO_CUMPLE' && (item.qualityGuideline?.critical || String(item.classification || '').startsWith('CRITICO_')));
   const criticalFailure = Boolean(evaluation.qualityCriticalErrorIds?.length || criticalItem);
-  const failedByMinimum = Boolean(isMigracionesBitel(campaign) && (technicalScore ?? 0) < 75);
+  const failedByMinimum = Boolean((isMigracionesBitel(campaign) || isPortabilidadBitelCampaign(campaign?.name)) && (technicalScore ?? 0) < 75);
   const gaps = items.filter((item:any) => item.compliance === 'NO_CUMPLE');
   return {
     ...evaluation,
@@ -352,7 +353,7 @@ db.exec('CREATE UNIQUE INDEX IF NOT EXISTS ux_assignment_one_active ON operation
 
 function repository(): SharedRepository {
   const users = db.prepare('SELECT * FROM users ORDER BY created_at DESC').all().map(publicUser);
-  const campaigns = db.prepare('SELECT * FROM campaigns ORDER BY name').all().map((r: any) => ({ id: r.id, name: r.name, client: r.client, status: r.status, products: JSON.parse(r.products_json), description: r.description || undefined, backgroundImage: r.background_image || undefined, qualityGuidelines: JSON.parse(r.quality_guidelines_json || '[]'), qualityCriterionWeights: JSON.parse(r.quality_criterion_weights_json || 'null') || undefined, qualityCriticalErrors: JSON.parse(r.quality_critical_errors_json || '[]') }));
+  const campaigns = db.prepare('SELECT * FROM campaigns ORDER BY name').all().map((r: any) => withPortabilidadBitelPue({ id: r.id, name: r.name, client: r.client, status: r.status, products: JSON.parse(r.products_json), description: r.description || undefined, backgroundImage: r.background_image || undefined, qualityGuidelines: JSON.parse(r.quality_guidelines_json || '[]'), qualityCriterionWeights: JSON.parse(r.quality_criterion_weights_json || 'null') || undefined, qualityCriticalErrors: JSON.parse(r.quality_critical_errors_json || '[]') }));
   const companies=db.prepare('SELECT id,name,status,created_at,updated_at FROM companies ORDER BY name').all().map((r:any)=>({id:r.id,name:r.name,status:r.status,createdAt:r.created_at,updatedAt:r.updated_at||undefined}));
   const operations=db.prepare('SELECT * FROM operations ORDER BY name').all().map((r:any)=>({id:r.id,companyId:r.company_id,campaignId:r.campaign_id,name:r.name,normalizedName:r.normalized_name,status:r.status,legacy:Boolean(r.legacy),createdAt:r.created_at||undefined,updatedAt:r.updated_at||undefined,closedAt:r.closed_at||undefined,version:Number(r.version||1),metadata:JSON.parse(r.metadata_json||'{}')}));
   const operationSupervisors=db.prepare('SELECT * FROM operation_supervisors ORDER BY start_at').all().map((r:any)=>({operationId:r.operation_id,supervisorId:r.supervisor_id,active:Boolean(r.active),startAt:r.start_at,endAt:r.end_at||undefined}));
@@ -940,6 +941,21 @@ async function startServer() {
         const score=Math.round(earned/possible*100);
         evaluation={...evaluation,technicalScore:score,scoreTotal:score,scoreConnect:null,scoreClarify:null,scoreConvert:null,qualityResult:undefined,criticalReason:undefined,qualityForm:{...evaluation.qualityForm,earned,possible}};
       }
+      if(evaluation.evaluationType==='QUALITY'&&isPortabilidadBitelCampaign(campaign.name)){
+        if(!['VENTA_CONCRETADA','NO_VENTA'].includes(evaluation.saleResult))return res.status(400).json({error:'Selecciona venta o no venta.'});
+        const definitions=campaign.qualityGuidelines||[],byId=new Map(answeredItems.map((item:any)=>[String(item.criterionId),item]));
+        if(!definitions.length||byId.size!==definitions.length||definitions.some(item=>!byId.has(item.id)))return res.status(400).json({error:'Responde los 9 atributos de la PUE Portabilidad Bitel.'});
+        if(definitions.some(item=>{const answer:any=byId.get(item.id);return !String(answer.finding||'').trim()||(answer.compliance==='NO_APLICA'&&!item.noApplies);}))return res.status(400).json({error:'Cada atributo requiere observación; No aplica solo está permitido según la pauta.'});
+        if(evaluation.saleResult==='NO_VENTA'&&(byId.get('pb_3_3') as any)?.compliance!=='NO_APLICA')return res.status(400).json({error:'En no venta, el atributo 3.3 debe ser No aplica.'});
+        if(evaluation.saleResult==='VENTA_CONCRETADA'&&(byId.get('pb_3_3') as any)?.compliance==='NO_APLICA')return res.status(400).json({error:'En venta, evalúa el atributo 3.3.'});
+        if(!answeredItems.some((item:any)=>item.compliance!=='NO_APLICA'))return res.status(400).json({error:'Debe haber al menos un atributo evaluable.'});
+        const allowedCritical=new Set((campaign.qualityCriticalErrors||[]).filter(item=>item.active).map(item=>item.id));
+        const criticalIds=Array.isArray(evaluation.qualityCriticalErrorIds)?evaluation.qualityCriticalErrorIds.map(String):[];
+        if(criticalIds.some((id:string)=>!allowedCritical.has(id)))return res.status(400).json({error:'Error crítico no reconocido en esta PUE.'});
+        const dimensions:Record<string,string>={C1:'CONECTAR',C2:'CLARIFICAR',C3:'CONVERTIR',C4:'CONECTAR_C4'};
+        evaluation={...evaluation,campaignId:advisor.campaignId,sale:evaluation.saleResult==='VENTA_CONCRETADA',items:definitions.map(definition=>{const answer:any=byId.get(definition.id);return{...answer,criterionId:definition.id,dimension:dimensions[definition.criterion],qualityGuideline:definition,attributeWeight:definition.weight,classification:definition.classification||(definition.critical?'CRITICO_COMPLIANCE':'NO_CRITICO'),attribute:definition.name};}),qualityCriticalErrorIds:criticalIds,qualityCriticalErrorSnapshot:(campaign.qualityCriticalErrors||[]).filter(item=>criticalIds.includes(item.id)),qualityStatus:'FINALIZED'};
+        evaluation=recalculateEditedEvaluation(evaluation,directory.campaigns);
+      }
       evaluation = { ...evaluation, campaignId:advisor.campaignId, teamId:advisor.teamId, supervisorId:advisor.supervisorId, operationId:operation.id, companyId:operation.companyId, supervisorAtEvaluation:advisor.supervisorId, validationStatus: 'VALIDATED' };
       if(!scopedRecord(authUser,evaluation))return res.status(404).json({error:'Asesor no encontrado en tu alcance.'});
       evaluation = correctMigracionesQualityEvaluation(evaluation, directory.campaigns);
@@ -962,7 +978,7 @@ async function startServer() {
         const supervisorRecipient = directory.users.find(item => item.id === (advisor?.supervisorId || evaluation.supervisorId) && item.role === 'SUPERVISOR' && item.status === 'ACTIVO');
         const campaign = directory.campaigns.find(item => item.id === evaluation.campaignId);
         const evaluator = directory.users.find(item => item.id === evaluation.evaluatorId);
-        const score = evaluation.technicalScore ?? evaluation.scoreTotal;
+        const score = isPortabilidadBitelCampaign(campaign?.name) ? evaluation.scoreTotal : evaluation.technicalScore ?? evaluation.scoreTotal;
         const result = [evaluation.qualityResult, score == null ? null : `${score}%`].filter(Boolean).join(' · ') || 'Registrado';
         const recipients = [...new Set([advisorRecipient?.email, supervisorRecipient?.email].filter(Boolean))] as string[];
         if (advisor && recipients.length) notificationSent = (await Promise.all(recipients.map(recipient => emailService.sendEvaluationNotification({ recipient, advisorName: advisor.name, campaignName: campaign?.name || 'Sin campaña', date: evaluation.date, result, evaluatorName: evaluator?.name || 'Monitor de Calidad', evaluationId: evaluation.id })))).every(Boolean);
@@ -1268,7 +1284,7 @@ async function startServer() {
     const answered=items.map((item:any)=>itemCompliance(item));
     const existingScore=current.technicalScore??current.scoreTotal;
     if(contentEdit&&!answered.some((status:any)=>status==='CUMPLE'||status==='NO_CUMPLE')&&!(existingScore!==null&&existingScore!==undefined&&Number.isFinite(Number(existingScore)))) return res.status(400).json({error:'Responde al menos un criterio evaluable antes de guardar.'});
-    const invalidNa=items.some((item:any)=>item.compliance==='NO_APLICA'&&item.qualityGuideline&&!item.qualityGuideline?.applicableRules?.length);
+    const invalidNa=items.some((item:any)=>item.compliance==='NO_APLICA'&&item.qualityGuideline&&!item.qualityGuideline?.applicableRules?.length&&!(String(item.criterionId).startsWith('pb_')&&item.qualityGuideline.noApplies));
     if(invalidNa)return res.status(400).json({error:'NO_APLICA requiere una regla explícita en el atributo.'});
     const directory=await readRepository();
     const advisorChanged=body.advisorId!==undefined&&String(body.advisorId)!==current.advisorId;

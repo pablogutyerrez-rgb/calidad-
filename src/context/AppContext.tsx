@@ -32,6 +32,7 @@ import { calculateEvaluationSummary, parseTimeToMinutes, formatMinutesToHHMM } f
 import { actionPlansApi, adminCampaignsApi, adminUsersApi, authApi, evaluationsApi, organizationApi, platformStateApi, sharedRepositoryApi } from '../api/sharedRepository';
 import type { SharedRepository } from '../api/sharedRepository';
 import { QUALITY_WEIGHTS } from '../data/qualityPueData';
+import { isPortabilidadBitelCampaign } from '../data/portabilidadBitelPue';
 
 export const formatAdvisorUsername = (name: string): string => {
   const parts = name
@@ -607,7 +608,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const activeQualityWeight = qualityScores ? qualityKeys.reduce((sum, key) => sum + (qualityScores[key] === null ? 0 : qualityWeights[key]), 0) : 0;
     const rawQualityTotal = qualityScores && activeQualityWeight ? Math.round(qualityKeys.reduce((sum, key) => sum + (qualityScores[key] === null ? 0 : Number(qualityScores[key]) * qualityWeights[key]), 0) / activeQualityWeight) : null;
     const qualityCampaign = campaigns.find(campaign => campaign.id === evalData.campaignId);
-    const failedByMinimum = Boolean(quality && /(?:migraciones.*bitel|bitel.*migraciones)/i.test(qualityCampaign?.name || '') && (rawQualityTotal ?? 0) < 75);
+    const failedByMinimum = Boolean(quality && (/(?:migraciones.*bitel|bitel.*migraciones)/i.test(qualityCampaign?.name || '') || isPortabilidadBitelCampaign(qualityCampaign?.name)) && (rawQualityTotal ?? 0) < 75);
     const firstGap=evalData.items.find(item=>item.compliance==='NO_CUMPLE');
     const summary = quality ? { scoreConnect: techcenterForm?null:qualityScores!.C1, scoreClarify: qualityScores!.C2, scoreConvert: qualityScores!.C3, scoreTotal: criticalFailure ? 0 : rawQualityTotal, primaryGap: techcenterForm ? firstGap?.attribute||firstGap?.qualityGuideline?.name||'' : criticalFailure ? 'Error crítico PUE' : 'PUE', secondaryGap: '', strongestPillar: '', recommendation: criticalFailure ? 'Corregir error crítico antes de nueva evaluación.' : 'Revisar atributos no cumplidos.' } : calculateEvaluationSummary(evalData.items, config);
     const newEval: Evaluation = {

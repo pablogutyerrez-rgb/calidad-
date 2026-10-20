@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, ClipboardCheck, Link2, ListChecks, ShieldCheck, Tag, Users } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { QUALITY_ATTRIBUTES } from '../../data/qualityPueData';
+import { isPortabilidadBitelCampaign } from '../../data/portabilidadBitelPue';
 import { FiltersBar } from '../common/FiltersBar';
 import { EvaluationOriginFilter, type EvaluationOriginFilterValue } from './EvaluationOriginFilter';
 import { isQualityEvaluable } from '../../utils/speechTypification';
@@ -44,7 +45,7 @@ export const QualityDashboardView: React.FC = () => {
     const items = activeGuidelines.filter(attribute => attribute.criterion === criterion);
     const results = quality.flatMap(evaluation => evaluation.items.filter(item => items.some(attribute => attribute.id === item.criterionId) && item.compliance !== 'NO_APLICA'));
     const score = results.length ? Math.round((results.filter(item => item.compliance === 'CUMPLE').length / results.length) * 100) : null;
-    return { criterion, label: ['Conexión y diagnóstico', 'Oferta y condiciones', 'Cierre y formalización', 'Cumplimiento transversal'][index], score };
+    return { criterion, label: (isPortabilidadBitelCampaign(selectedCampaign?.name) ? ['Conexión y diagnóstico', 'Propuesta de valor', 'Calificación y cierre', 'Experiencia del cliente'] : ['Conexión y diagnóstico', 'Oferta y condiciones', 'Cierre y formalización', 'Cumplimiento transversal'])[index], score };
   });
   const techcenterEvaluations=quality.filter(evaluation=>evaluation.qualityForm?.id===TECHCENTER_MOVISTAR_FORM_ID);
   const customCriteria=new Map<string,{criterion:string;label:string;passed:number;total:number}>();

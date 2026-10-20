@@ -26,6 +26,7 @@ import { CallTypificationFields } from './CallTypificationFields';
 import { EMPTY_CLASSIFICATION, classificationError, classificationPayload } from '../../utils/evaluationTypification';
 import { filesApi } from "../../api/sharedRepository";
 import { isTechcenterMovistarCampaign } from '../../data/techcenterMovistarScope';
+import { isPortabilidadBitelCampaign } from '../../data/portabilidadBitelPue';
 
 const TechcenterMovistarQualityModal=React.lazy(()=>import('./TechcenterMovistarQualityModal').then(module=>({default:module.TechcenterMovistarQualityModal})));
 
@@ -62,6 +63,7 @@ export const QualityEvaluationModal: React.FC<{
   const [callId, setCallId] = useState(`PUE-${Date.now()}`);
   const [recordingCode, setRecordingCode] = useState("");
   const [classification,setClassification] = useState(EMPTY_CLASSIFICATION);
+  const [saleResult, setSaleResult] = useState<'' | 'VENTA_CONCRETADA' | 'NO_VENTA'>('');
   const [answers, setAnswers] = useState<Record<string, Result>>({});
   const [comments, setComments] = useState<Record<string, string>>({});
   const [commentOpen, setCommentOpen] = useState<string | null>(null);
@@ -85,6 +87,7 @@ export const QualityEvaluationModal: React.FC<{
   const evaluators = currentUser.role === "MONITOR" ? [currentUser] : users.filter((u) => u.role !== "ASESOR");
   const campaign = campaigns.find((c) => c.id === advisor?.campaignId);
   const isMigracionesBitelCampaign = /(?:migraciones.*bitel|bitel.*migraciones)/i.test(campaign?.name || "");
+  const isPortabilidadBitel = isPortabilidadBitelCampaign(campaign?.name);
   const criterionWeights = campaign?.qualityCriterionWeights || QUALITY_WEIGHTS;
   const criterionWeight = (value: string) => criterionWeights[value as keyof typeof criterionWeights] || 0;
   const criticalErrors = (campaign?.qualityCriticalErrors?.length
@@ -126,7 +129,7 @@ export const QualityEvaluationModal: React.FC<{
     const invalid =
       critical.length > 0 ||
       guidelines.some((a) => (a.critical || a.classification?.startsWith("CRITICO_")) && answers[a.id] === "NO_CUMPLE");
-    const failedByMinimum = isMigracionesBitelCampaign && denom > 0 && Math.round((base / denom) * 100) < 75;
+    const failedByMinimum = (isMigracionesBitelCampaign || isPortabilidadBitel) && denom > 0 && Math.round((base / denom) * 100) < 75;
     return {
       groups,
       invalid,
@@ -137,7 +140,8 @@ export const QualityEvaluationModal: React.FC<{
       denominator: Math.round(denom * 100),
       answered: denom > 0,
     };
-  }, [answers, critical, guidelines, criterionWeights, isMigracionesBitelCampaign]);
+  }, [answers, critical, guidelines, criterionWeights, isMigracionesBitelCampaign, isPortabilidadBitel]);
+  const displayedScore = isPortabilidadBitel && summary.invalid ? 0 : summary.score;
   const update = (id: string, value: Result) => {
     setAnswers((p) => ({ ...p, [id]: value }));
     setDraftSaved(false);
@@ -145,6 +149,14 @@ export const QualityEvaluationModal: React.FC<{
   const finalize = async () => {
     if (!advisor || savingRef.current) return;
     if (classificationError(classification)) { setAudioError(classificationError(classification)); return; }
+    if (isPortabilidadBitel) {
+      if (!saleResult) { setAudioError('Selecciona si la llamada terminó en venta o no venta.'); return; }
+      if (guidelines.some(item => !answers[item.id])) { setAudioError('Responde los 9 atributos de la PUE antes de finalizar.'); return; }
+      if (guidelines.some(item => !comments[item.id]?.trim())) { setAudioError('Registra una observación en cada atributo, incluso cuando cumple o no aplica.'); return; }
+      if (saleResult === 'NO_VENTA' && answers.pb_3_3 !== 'NO_APLICA') { setAudioError('En una no venta, el atributo 3.3 debe marcarse No aplica.'); return; }
+      if (saleResult === 'VENTA_CONCRETADA' && answers.pb_3_3 === 'NO_APLICA') { setAudioError('En una venta, evalúa el atributo 3.3.'); return; }
+      if (!summary.answered) { setAudioError('Debe haber al menos un atributo evaluable.'); return; }
+    }
     savingRef.current = true;
     setIsSaving(true);
     let persistedAudioUrl = audio?.url;
@@ -214,8 +226,8 @@ export const QualityEvaluationModal: React.FC<{
       origin: "MANUAL",
       qualityCriticalErrorIds: critical,
       qualityCriticalErrorSnapshot: criticalErrors.filter((error) => critical.includes(error.id)),
-      sale: false,
-      saleResult: "NO_VENTA",
+      sale: isPortabilidadBitel && saleResult === 'VENTA_CONCRETADA',
+      saleResult: isPortabilidadBitel ? saleResult as 'VENTA_CONCRETADA' | 'NO_VENTA' : "NO_VENTA",
       comments: generalComments,
       callDescription:callDescription.trim(),
       primaryGap: "",
@@ -344,6 +356,7 @@ export const QualityEvaluationModal: React.FC<{
                   <option value="CERTIFICACION">Certificación</option>
                 </select>
               </label>
+              {isPortabilidadBitel && <label className="font-semibold text-[#43565A]">Resultado de la llamada *<select value={saleResult} onChange={event=>{const value=event.target.value as typeof saleResult;setSaleResult(value);setAnswers(previous=>({...previous,pb_3_3:value==='NO_VENTA'?'NO_APLICA':undefined}));setDraftSaved(false);}} className="mt-1 w-full rounded-lg border border-[#D7E2E2] bg-white px-3 py-2 text-sm"><option value="">Seleccionar</option><option value="VENTA_CONCRETADA">Venta</option><option value="NO_VENTA">No venta</option></select></label>}
               <div className="rounded-lg border border-dashed border-[#9DBFC0] bg-[#F3FAFA] px-3 py-2 text-xs text-[#43565A]"><b className="text-[#006B6B]">Origen: Manual</b><br/>Speech Analytics: integración pendiente de API.</div>
               <label className="font-semibold text-[#43565A]">
                 Hora de llamada
@@ -408,7 +421,7 @@ export const QualityEvaluationModal: React.FC<{
                   <p
                     className="mt-1 text-3xl font-black text-[#008B88]"
                   >
-                    {summary.score === null ? "—" : `${summary.score}%`}
+                    {displayedScore === null ? "—" : `${displayedScore}%`}
                   </p>
                   <p className="text-xs text-[#66767A]">
                     {summary.answered
@@ -419,7 +432,7 @@ export const QualityEvaluationModal: React.FC<{
                 <div
                   className={`flex h-14 w-14 items-center justify-center rounded-full border-[8px] text-xs font-bold ${summary.failed ? "border-[#FF4D4F] text-[#FF4D4F]" : "border-[#00B8B0] text-[#006B6B]"}`}
                 >
-                  {summary.score === null ? "—" : `${summary.score}%`}
+                  {displayedScore === null ? "—" : `${displayedScore}%`}
                 </div>
               </div>
               <div className="mt-3 grid grid-cols-4 gap-1 text-[10px]">
@@ -532,6 +545,7 @@ export const QualityEvaluationModal: React.FC<{
                       <b className="pt-1 text-xs">{a.weight * 100}%</b>
                       <select
                         value={answer || ""}
+                        disabled={isPortabilidadBitel && a.id === 'pb_3_3' && saleResult === 'NO_VENTA'}
                         onChange={(e) =>
                           update(
                             a.id,
@@ -626,7 +640,7 @@ export const QualityEvaluationModal: React.FC<{
           <section className="rounded-xl border border-[#FFCACA] bg-[#FFF7F7] p-4">
             <div className="flex items-center gap-2 text-sm font-bold text-[#FF4D4F]">
               <AlertTriangle className="h-4 w-4" />
-              Errores críticos 4.1 — cualquiera deja la PUE en 0%
+              {isPortabilidadBitel ? 'Errores críticos — cualquiera deja la PUE en 0%' : 'Errores críticos 4.1 — cualquiera deja la PUE en 0%'}
             </div>
             <div className="mt-3 space-y-1.5">
               {criticalErrors.map((error) => (
@@ -665,7 +679,7 @@ export const QualityEvaluationModal: React.FC<{
               <strong
                 className="text-2xl text-[#008B88]"
               >
-                {summary.score === null ? "—" : `${summary.score}%`}
+                {displayedScore === null ? "—" : `${displayedScore}%`}
               </strong>
               {summary.failed && <span className="ml-3 text-xs font-bold text-[#FF4D4F]">REPROBADA</span>}
             </div>
